@@ -236,6 +236,21 @@ const SND = {
 
     this.bassBus = c.createGain(); this.bassBus.gain.value = 0.5; this.bassBus.connect(this.music);
 
+    // Lead-Gitarre fürs Solo: mehr Zerrung, mittiger, mit Echo
+    this.leadIn = c.createGain(); this.leadIn.gain.value = 5;
+    const lsh = c.createWaveShaper(), lc = new Float32Array(n), lk = 320;
+    for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; lc[i] = (3 + lk) * x * 20 * Math.PI / 180 / (Math.PI + lk * Math.abs(x)); }
+    lsh.curve = lc; lsh.oversample = '4x';
+    const lhp = c.createBiquadFilter(); lhp.type = 'highpass'; lhp.frequency.value = 250;
+    const lmid = c.createBiquadFilter(); lmid.type = 'peaking'; lmid.frequency.value = 1600; lmid.gain.value = 5; lmid.Q.value = 1.2;
+    const llp = c.createBiquadFilter(); llp.type = 'lowpass'; llp.frequency.value = 4200;
+    const lout = c.createGain(); lout.gain.value = 0.11;
+    this.leadIn.connect(lsh); lsh.connect(lhp); lhp.connect(lmid); lmid.connect(llp); llp.connect(lout); lout.connect(this.music);
+    const ld = c.createDelay(); ld.delayTime.value = 60 / 108 * 0.75;
+    const lfb = c.createGain(); lfb.gain.value = 0.3;
+    const lwet = c.createGain(); lwet.gain.value = 0.35;
+    lout.connect(ld); ld.connect(lfb); lfb.connect(ld); ld.connect(lwet); lwet.connect(this.music);
+
     const nb = c.createBuffer(1, c.sampleRate, c.sampleRate), d = nb.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     this.noiseBuf = nb;
@@ -244,7 +259,80 @@ const SND = {
     setInterval(() => this.schedule(), 25);
   },
   startMusic() { if (!this.ctx) return; this.playing = true; this.step = 0; this.nextT = this.ctx.currentTime + 0.1; },
-  stopMusic() { this.playing = false; this.setBoss(false); },
+  stopMusic() { this.playing = false; this.setBoss(false); this.setSolo(0); },
+  // ----- Gitarrensolo: improvisiert live aus der E-Moll-Blues-Tonleiter -----
+  soloLevel: 0,
+  setSolo(level) {
+    if (level === this.soloLevel) return;
+    if (level === 0 && this.soloLevel > 0 && this.ctx && this.playing) this.soloDive();
+    if (level > 0 && this.soloLevel === 0) { this.soloQ = []; this.soloWait = 0; this.soloPos = 7; }
+    this.soloLevel = level;
+  },
+  soloScale() {
+    if (!this.scale) { this.scale = []; for (let o = 0; o < 3; o++) for (const d of [0, 3, 5, 6, 7, 10]) this.scale.push(64 + o * 12 + d); this.scale.push(100); }
+    return this.scale;
+  },
+  soloPhrase() {
+    const sc = this.soloScale(), L = this.soloLevel, q = [];
+    const top = L >= 3 ? 16 : L === 2 ? 14 : 11;
+    let pos = clamp(this.soloPos, 0, top);
+    const note = (len, extra = {}) => q.push({ m: sc[pos], len, ...extra });
+    const r = Math.random();
+    if (r < 0.3 + L * 0.08) { // schneller Lauf
+      const dir = pos > top - 3 ? -1 : pos < 3 ? 1 : (Math.random() < 0.5 ? -1 : 1);
+      const n = irnd(4, 4 + L * 2);
+      for (let i = 0; i < n; i++) { note(1); pos = clamp(pos + dir, 0, top); }
+      note(irnd(3, 6), { vib: true });
+    } else if (r < 0.6) { // Bending mit Auflösung
+      pos = clamp(pos + irnd(-2, 2), 2, top);
+      note(4, { bend: 2, vib: true });
+      pos = clamp(pos - 1, 0, top); note(2);
+      pos = clamp(pos - 1, 0, top); note(2, { vib: true });
+    } else if (r < 0.8) { // Wiederholungs-Lick
+      const a = clamp(pos, 1, top), b = a - 1;
+      for (let i = 0; i < 3 + L; i++) { q.push({ m: sc[i % 2 ? b : a], len: 1 }); }
+      pos = a; note(4, { bend: 1, vib: true });
+    } else { // lang gezogener Ton
+      pos = clamp(top - irnd(0, 3), 0, top);
+      note(8, { bend: 2, vib: true });
+    }
+    if (Math.random() < 0.6 - L * 0.15) q.push({ rest: true, len: irnd(1, 3) });
+    this.soloPos = pos;
+    return q;
+  },
+  soloStep(t) {
+    if (this.soloWait > 0) { this.soloWait--; return; }
+    if (!this.soloQ.length) this.soloQ = this.soloPhrase();
+    const nt = this.soloQ.shift();
+    this.soloWait = nt.len - 1;
+    if (!nt.rest) this.lead(nt.m, t, nt.len * this.stepDur, nt.bend || 0, nt.vib);
+  },
+  lead(m, t, dur, bend, vib) {
+    const c = this.ctx, f = mtof(m), d = Math.max(0.06, dur * 0.95);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.5, t + 0.004);
+    g.gain.setValueAtTime(0.42, t + d * 0.8); g.gain.linearRampToValueAtTime(0, t + d + 0.04);
+    g.connect(this.leadIn);
+    const oscs = [['sawtooth', 0], ['square', 7]].map(([type, det]) => {
+      const o = c.createOscillator(); o.type = type; o.detune.value = det;
+      if (bend) { o.frequency.setValueAtTime(mtof(m - bend), t); o.frequency.setValueAtTime(mtof(m - bend), t + Math.min(0.05, d * 0.2)); o.frequency.linearRampToValueAtTime(f, t + Math.min(0.16, d * 0.5)); }
+      else o.frequency.setValueAtTime(f, t);
+      o.connect(g); o.start(t); o.stop(t + d + 0.06);
+      return o;
+    });
+    if (vib && d > 0.25) {
+      const lfo = c.createOscillator(), lg = c.createGain();
+      lfo.frequency.value = 6; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(35, t + d);
+      lfo.connect(lg); for (const o of oscs) lg.connect(o.detune);
+      lfo.start(t); lfo.stop(t + d + 0.06);
+    }
+  },
+  soloDive() { // Solo reißt ab: Sturzflug nach unten
+    const c = this.ctx, t = c.currentTime + 0.02, g = c.createGain(), o = c.createOscillator();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(mtof(88), t); o.frequency.exponentialRampToValueAtTime(mtof(40), t + 0.6);
+    g.gain.setValueAtTime(0.4, t); g.gain.linearRampToValueAtTime(0, t + 0.6);
+    o.connect(g); g.connect(this.leadIn); o.start(t); o.stop(t + 0.65);
+  },
   setBoss(on) { this.bossMode = on; this.stepDur = 60 / (on ? 122 : 108) / 4; },
   toggleMute() {
     this.muted = !this.muted;
@@ -270,6 +358,7 @@ const SND = {
     if (dr.s.includes(i)) this.snare(t, bar.d === 'fill' && i > 12 ? 0.5 + (i - 12) * 0.15 : 1);
     if (dr.h.includes(i)) this.hat(t, bar.d === 'big' ? 0.12 : 0.05, i % 4 === 0 ? 1 : 0.6);
     if (dr.crash && i === 0) this.crash(t);
+    if (this.soloLevel > 0) this.soloStep(t);
   },
   guitar(m, t, dur, type) {
     const c = this.ctx, f = mtof(m), d = Math.max(0.07, dur * 0.92);
@@ -440,6 +529,7 @@ function newGame() {
   while (x < W + 60) { const h = makeHouse(x, x < 260); G.houses.push(h); x += h.w + irnd(2, 9); }
 }
 
+const SOLO_AT = [6, 10, 15];
 function darkChance() { const [a, b] = G.d.dark; return clamp(a + G.t * 0.0015, a, b); }
 
 // ---------- Input ----------
@@ -974,6 +1064,18 @@ function update(dt) {
     }
   }
 
+  // Gitarrensolo ab Combo 6, wird mit der Combo wilder
+  const soloLvl = G.combo >= SOLO_AT[2] ? 3 : G.combo >= SOLO_AT[1] ? 2 : G.combo >= SOLO_AT[0] ? 1 : 0;
+  if (soloLvl !== SND.soloLevel) {
+    if (soloLvl > SND.soloLevel) {
+      pop(p.x + 20, p.y - 4, soloLvl === 1 ? 'GITARRENSOLO!' : soloLvl === 2 ? 'SOLO LEVEL 2!' : 'GUITAR HERO!', '#ff77a8');
+      ring(p.x + 20, p.y + 8, 20, '#ff77a8', 60);
+    }
+    SND.setSolo(soloLvl);
+  }
+  if (soloLvl && Math.random() < dt * (2 + soloLvl * 2))
+    G.parts.push({ x: p.x + rnd(10, 30), y: p.y + rnd(0, 10), vx: rnd(-25, -10), vy: rnd(-25, -12), life: 1.1, max: 1.1, col: pick(['#ff77a8', '#ffec27', '#29adff']), g: 0, sz: 1, note: true });
+
   updateParts(dt);
   G.shake = Math.max(0, G.shake - dt * 20);
   G.flash = Math.max(0, G.flash - dt);
@@ -1115,6 +1217,7 @@ function drawHUD() {
   ctx.fillStyle = 'rgba(26,28,44,0.7)'; ctx.fillRect(0, 0, W, 10);
   txt(String(G.score).padStart(6, '0'), 3, 3, '#fff1e8', 1, 'l', false);
   for (let i = 0; i < G.maxHp; i++) ctx.drawImage(i < G.hp ? HEART_S : HEART_E, 32 + i * 7, 3);
+  if (SND.soloLevel && state === 'play') txt(['', 'SOLO!', 'SOLO!!', 'SOLO!!!'][SND.soloLevel], 3, 13, Math.floor(G.t * 6) % 2 ? '#ff77a8' : '#ffec27', 1, 'l');
   if (G.combo >= 2) txt('COMBO X' + Math.min(5, 1 + Math.floor(G.combo / 3)) + ' (' + G.combo + ')', 72, 3, '#ffec27', 1, 'l', false);
   if (G.p.spread > 0) txt('3-FACH ' + Math.ceil(G.p.spread), 150, 3, '#29adff', 1, 'l', false);
   // LED-Vorrat: volle LEDs leuchten, die gerade ladende füllt sich von unten
@@ -1219,7 +1322,9 @@ function render() {
   }
   for (const q of G.parts) {
     ctx.globalAlpha = clamp(q.life / q.max * 1.5, 0, 1);
-    ctx.fillStyle = q.col; ctx.fillRect(Math.round(q.x), Math.round(q.y), q.sz, q.sz);
+    ctx.fillStyle = q.col;
+    if (q.note) { const x = Math.round(q.x), y = Math.round(q.y); ctx.fillRect(x, y + 3, 2, 2); ctx.fillRect(x + 1, y, 1, 3); ctx.fillRect(x + 2, y, 1, 1); }
+    else ctx.fillRect(Math.round(q.x), Math.round(q.y), q.sz, q.sz);
   }
   ctx.globalAlpha = 1;
   for (const q of G.pops) txt(q.text, q.x, q.y, q.life < 0.3 && Math.floor(t * 20) % 2 ? '#5f574f' : q.col, 1, 'c');

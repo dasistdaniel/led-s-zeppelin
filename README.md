@@ -24,3 +24,4 @@ Ein Sideways-Shoot'em'up im Pixel-Look: Du steuerst einen Zeppelin über eine n�
 - Gegner: Fledermäuse, Doppeldecker, Sperrballons
 - Bossgegner **Stromfresser**, der die Stadt wieder ausknipst
 - Extras: Herz, 3-fach-Schuss, LED-Paket
+- Gitarrensolo ab Combo 6, das bei längeren Serien immer wilder wird
