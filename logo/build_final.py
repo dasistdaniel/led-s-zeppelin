@@ -1,4 +1,4 @@
-"""LED's'Zeppelin - finales Logo (Konzept C ohne Haus): das Luftschiff wirft eine LED ab.
+"""LED's'Zeppelin - finales Logo: das Pixel-Luftschiff.
 
 Erzeugt in logo/:
   symbol.svg            Farbversion (transparent)
@@ -21,14 +21,10 @@ COL = {
     's': '#83769c',  # Hülle unten (Schatten)
     'b': '#ab5236',  # Gondel
     'c': '#29adff',  # Gondelfenster
-    'g': '#c2c3c7',  # LED-Beinchen
-    'y': '#ffec27',  # LED-Kuppel
-    'o': '#ffa300',  # LED-Kuppel unten
-    'h': '#fff1e8',  # LED-Glanzlicht
 }
 NAVY, INK, PINK = '#1a1c2c', '#1d2b53', '#ff77a8'
 
-# 16 x 16: Luftschiff oben, darunter die fallende LED (Kuppel voran)
+# 16 x 8: das Luftschiff
 SYMBOL = [
     '.r....wwwwww....',
     '.rr.wwwWWwwwww..',
@@ -38,16 +34,9 @@ SYMBOL = [
     '.rr.ssssssssss..',
     '.r....ssssss....',
     '.......bccb.....',
-    '................',
-    '.......g........',
-    '.......g..g.....',
-    '......gggggg....',
-    '.......hyyy.....',
-    '.......yyyy.....',
-    '.......oyyo.....',
-    '........oo......',
 ]
-SW, SH = 16, 16
+SW, SH = 16, 8
+VO = (16 - SH) / 2  # senkrecht zentrieren
 
 FONT = {
     'L': '100100100100111', 'E': '111100110100111', 'D': '110101101101110', 'S': '011100010001110',
@@ -81,19 +70,6 @@ def layers(grid, u, ox=0.0, oy=0.0, mono=None):
             if ch != '.': by.setdefault(mono or COL[ch], set()).add((x, y))
     return ''.join(f'<path fill="{c}" d="{runs(px, u, ox, oy)}"/>' for c, px in by.items())
 
-def glow(u, ox, oy, alpha=0.18):
-    """Weicher Pixel-Schein um die LED."""
-    led = {(x, y) for y, r in enumerate(SYMBOL) for x, ch in enumerate(r) if ch in 'yoh' }
-    def near(r):  # runder Schein: alle Pixel bis Abstand r zur LED
-        return {(x, y) for x in range(-4, 21) for y in range(6, 21)
-                if min((x - a) ** 2 + (y - b) ** 2 for a, b in led) <= r * r} - led
-    ring1 = near(1.0)
-    ring2 = near(2.3) - ring1
-    taken = {(x, y) for y, r in enumerate(SYMBOL) for x, ch in enumerate(r) if ch != '.'}
-    ring1 -= taken; ring2 -= taken
-    return (f'<path fill="#ffec27" fill-opacity="{alpha}" d="{runs(ring1, u, ox, oy)}"/>'
-            f'<path fill="#ffec27" fill-opacity="{alpha / 2.5:.2f}" d="{runs(ring2, u, ox, oy)}"/>')
-
 def text(s, u, ox, oy, col, spacing=1):
     px, x = set(), 0
     for ch in s:
@@ -112,16 +88,16 @@ def save(name, s):
 
 # ---------- Symbol ----------
 U = 14; PAD = 16  # 16*14 + 2*16 = 256
-save('symbol.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD), "LED's'Zeppelin"))
-save('symbol-black.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD, '#000000'), "LED's'Zeppelin"))
-save('symbol-white.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD, '#ffffff'), "LED's'Zeppelin"))
+save('symbol.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD + VO * U), "LED's'Zeppelin"))
+save('symbol-black.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD + VO * U, '#000000'), "LED's'Zeppelin"))
+save('symbol-white.svg', svg(256, 256, layers(SYMBOL, U, PAD, PAD + VO * U, '#ffffff'), "LED's'Zeppelin"))
 
 # ---------- Icon: Farbversion auf dunkler Kachel (18x18-Raster, 1 Pixel Rand) ----------
 IU = 256 / 18
-save('icon.svg', svg(256, 256, f'<rect width="256" height="256" fill="{NAVY}"/>' + layers(SYMBOL, IU, IU, IU), "LED's'Zeppelin"))
+save('icon.svg', svg(256, 256, f'<rect width="256" height="256" fill="{NAVY}"/>' + layers(SYMBOL, IU, IU, IU + VO * IU), "LED's'Zeppelin"))
 
 # ---------- Favicon: 16x16-Raster pixelgenau, ohne Schein ----------
-save('favicon.svg', svg(16, 16, f'<rect width="16" height="16" fill="{NAVY}"/>' + layers(SYMBOL, 1), "LED's'Zeppelin"))
+save('favicon.svg', svg(16, 16, f'<rect width="16" height="16" fill="{NAVY}"/>' + layers(SYMBOL, 1, 0, VO), "LED's'Zeppelin"))
 
 # ---------- Schriftzug: LED gelb, 's' nur angedeutet, ZEPPELIN hell ----------
 def wordmark(u, ox, oy):
@@ -134,12 +110,12 @@ def wordmark(u, ox, oy):
 wm, wmw = wordmark(16, 0, 0)
 lx = 256 + 32
 save('lockup-horizontal.svg', svg(lx + wmw + 16, 256,
-     f'<rect width="{lx + wmw + 16}" height="256" fill="{NAVY}"/>' + layers(SYMBOL, U, PAD, PAD)
+     f'<rect width="{lx + wmw + 16}" height="256" fill="{NAVY}"/>' + layers(SYMBOL, U, PAD, PAD + VO * U)
      + wordmark(16, lx, 88)[0], "LED's'Zeppelin"))
 sw_ = wmw + 64
-save('lockup-stacked.svg', svg(sw_, 256 + 150,
-     f'<rect width="{sw_}" height="{256 + 150}" fill="{NAVY}"/>' 
-     + layers(SYMBOL, U, (sw_ - 256) / 2 + PAD, PAD) + wordmark(16, 32, 290)[0], "LED's'Zeppelin"))
+save('lockup-stacked.svg', svg(sw_, 336,
+     f'<rect width="{sw_}" height="336" fill="{NAVY}"/>' 
+     + layers(SYMBOL, U, (sw_ - 256) / 2 + PAD, 48) + wordmark(16, 32, 208)[0], "LED's'Zeppelin"))
 
 # ---------- Social Preview 1280x640 (Pixel = 8 px, Raster 160x80) ----------
 P = 8; GW, GH = 160, 80
@@ -189,9 +165,9 @@ body.append(f'<rect x="0" y="{GROUND * P}" width="1280" height="{8 * P}" fill="#
 body.append(f'<rect x="0" y="{GROUND * P}" width="1280" height="{P}" fill="#5f574f"/>')
 body.append(f'<path fill="#3a3640" d="{runs({(x, GROUND + 4) for s in range(0, GW, 10) for x in range(s, s + 5)}, P)}"/>')
 # Logo groß links, Text rechts
-SU = 18  # 16*18 = 288 px
-lx, ly = 80, 112
-body.append(glow(SU, lx, ly, 0.2) + layers(SYMBOL, SU, lx, ly))
+SU = 20  # 16*20 = 320 px breit
+lx, ly = 64, 128
+body.append(layers(SYMBOL, SU, lx, ly))
 tx, ty, tu, su = 424, 160, 16, 9
 a, wa = text('LED', tu, tx, ty, '#ffec27')
 b, wb = text("'S'", su, tx + wa + 12, ty + 3 * tu, '#3a3458')
