@@ -2,11 +2,11 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>LED's'Zeppelin</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0b0c16; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
+  body { display: flex; align-items: center; justify-content: center; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
   canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; box-shadow: 0 0 40px #000; }
 </style>
 </head>
@@ -23,7 +23,8 @@ const ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
 function resize() {
-  const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
+  const f = Math.min(innerWidth / W, innerHeight / H);
+  const s = f >= 2 ? Math.floor(f) : Math.max(0.5, f);
   cv.style.width = W * s + 'px';
   cv.style.height = H * s + 'px';
 }
@@ -451,7 +452,16 @@ addEventListener('keydown', e => {
   onPress(e.code);
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (state === 'play') state = 'pause'; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; releaseTouches(); if (state === 'play') pauseGame(); });
+
+let pauseSel = 0;
+function pauseGame() { state = 'pause'; pauseSel = 0; releaseTouches(); if (SND.ctx) SND.ctx.suspend(); }
+function resumeGame() { state = 'play'; if (SND.ctx) SND.ctx.resume(); keys.Space = false; }
+function quitToTitle() {
+  saveHi();
+  SND.stopMusic(); if (SND.ctx) SND.ctx.resume();
+  state = 'title'; stateT = 0;
+}
 
 function onPress(code) {
   if (code === 'KeyM') { SND.toggleMute(); return; }
@@ -467,14 +477,124 @@ function onPress(code) {
     SND.init(); newGame(); state = 'play'; stateT = 0; SND.startMusic();
     keys.Space = false; // nicht sofort feuern
   } else if (state === 'play' && (code === 'KeyP' || code === 'Escape')) {
-    state = 'pause'; if (SND.ctx) SND.ctx.suspend();
-  } else if (state === 'pause' && (code === 'KeyP' || code === 'Escape' || code === 'Space')) {
-    state = 'play'; if (SND.ctx) SND.ctx.resume(); keys.Space = false;
+    pauseGame();
+  } else if (state === 'pause') {
+    if (code === 'ArrowUp' || code === 'KeyW') pauseSel = 0;
+    else if (code === 'ArrowDown' || code === 'KeyS') pauseSel = 1;
+    else if (code === 'KeyP' || code === 'Escape') resumeGame();
+    else if (code === 'Space' || code === 'Enter') { if (pauseSel === 0) resumeGame(); else quitToTitle(); }
   } else if (state === 'over' && stateT > 1.2 && code === 'Escape') {
     state = 'title'; stateT = 0;
   } else if (state === 'over' && stateT > 1.2 && (code === 'Space' || code === 'Enter')) {
     newGame(); state = 'play'; stateT = 0; SND.startMusic(); keys.Space = false;
   }
+}
+
+// ---------- Touch-Steuerung ----------
+// Links: schwebender Joystick (ziehen). Rechts: Feuer-Knopf und LED-Knopf. Oben rechts: Pause.
+let touchMode = false, touchFire = false;
+const touches = {};
+const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };
+const JOY_R = 14;
+const BTN = { fire: { x: 293, y: 146, r: 17 }, led: { x: 255, y: 159, r: 12 }, pause: { x: 300, y: 12, w: 17, h: 13 } };
+const UI = {
+  resume: { x: 110, y: 86, w: 100, h: 14 }, quit: { x: 110, y: 104, w: 100, h: 14 },
+  overMenu: { x: 130, y: 131, w: 60, h: 12 },
+  diffL: { x: 94, y: 112, w: 34, h: 22 }, diffR: { x: 192, y: 112, w: 34, h: 22 }
+};
+const inRect = (q, b) => q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h;
+const inCirc = (q, b) => Math.hypot(q.x - b.x, q.y - b.y) <= b.r + 5;
+function toGame(t) { const r = cv.getBoundingClientRect(); return { x: (t.clientX - r.left) / r.width * W, y: (t.clientY - r.top) / r.height * H }; }
+function releaseTouches() { for (const k in touches) delete touches[k]; joy.id = null; joy.dx = joy.dy = 0; touchFire = false; }
+
+// Menüs: gilt für Finger und Maus
+function uiTap(q) {
+  if (state === 'title') {
+    if (inRect(q, UI.diffL)) onPress('ArrowLeft');
+    else if (inRect(q, UI.diffR)) onPress('ArrowRight');
+    else onPress('Space');
+    return true;
+  }
+  if (state === 'pause') {
+    if (inRect(q, UI.resume)) resumeGame();
+    else if (inRect(q, UI.quit)) quitToTitle();
+    return true;
+  }
+  if (state === 'over') {
+    if (stateT > 1.2) onPress(inRect(q, UI.overMenu) ? 'Escape' : 'Space');
+    return true;
+  }
+  return false;
+}
+function touchStart(id, q) {
+  if (uiTap(q)) return;
+  if (inRect(q, BTN.pause)) { pauseGame(); return; }
+  if (inCirc(q, BTN.led)) { touches[id] = 'led'; G.dropReq = true; return; }
+  if (q.x < W * 0.55) {
+    if (joy.id === null) { touches[id] = 'joy'; joy.id = id; joy.ox = joy.x = q.x; joy.oy = joy.y = q.y; joy.dx = joy.dy = 0; }
+    return;
+  }
+  touches[id] = 'fire'; touchFire = true; // alles andere rechts = Feuer
+}
+function moveJoy(q) {
+  let vx = q.x - joy.ox, vy = q.y - joy.oy;
+  const d = Math.hypot(vx, vy);
+  if (d > JOY_R) { joy.ox = q.x - vx / d * JOY_R; joy.oy = q.y - vy / d * JOY_R; } // Joystick wandert mit
+  joy.x = q.x; joy.y = q.y;
+  vx = (q.x - joy.ox) / JOY_R; vy = (q.y - joy.oy) / JOY_R;
+  joy.dx = Math.abs(vx) < 0.15 ? 0 : clamp(vx, -1, 1);
+  joy.dy = Math.abs(vy) < 0.15 ? 0 : clamp(vy, -1, 1);
+}
+addEventListener('touchstart', e => {
+  e.preventDefault(); touchMode = true; SND.init();
+  for (const t of e.changedTouches) touchStart(t.identifier, toGame(t));
+}, { passive: false });
+addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) if (t.identifier === joy.id) moveJoy(toGame(t));
+}, { passive: false });
+function touchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const role = touches[t.identifier]; delete touches[t.identifier];
+    if (role === 'joy') { joy.id = null; joy.dx = joy.dy = 0; }
+  }
+  touchFire = Object.values(touches).includes('fire');
+}
+addEventListener('touchend', touchEnd, { passive: false });
+addEventListener('touchcancel', touchEnd, { passive: false });
+cv.addEventListener('mousedown', e => { if (state !== 'play') uiTap(toGame(e)); });
+
+function disc(cx, cy, r, col) {
+  ctx.fillStyle = col;
+  for (let y = -r; y <= r; y++) { const w = Math.round(Math.sqrt(r * r - y * y)); ctx.fillRect(Math.round(cx) - w, Math.round(cy) + y, w * 2 + 1, 1); }
+}
+function circle(cx, cy, r, col) {
+  ctx.fillStyle = col;
+  const n = Math.ceil(r * 7);
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; ctx.fillRect(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), 1, 1); }
+}
+function drawTouchUI() {
+  // Pause
+  const pb = BTN.pause;
+  ctx.fillStyle = 'rgba(26,28,44,0.6)'; ctx.fillRect(pb.x, pb.y, pb.w, pb.h);
+  ctx.fillStyle = '#c2c3c7'; ctx.fillRect(pb.x + 5, pb.y + 3, 2, 7); ctx.fillRect(pb.x + 10, pb.y + 3, 2, 7);
+  // Joystick
+  if (joy.id !== null) {
+    disc(joy.ox, joy.oy, JOY_R, 'rgba(194,195,199,0.12)'); circle(joy.ox, joy.oy, JOY_R, 'rgba(194,195,199,0.5)');
+    disc(joy.ox + joy.dx * JOY_R * 0.8, joy.oy + joy.dy * JOY_R * 0.8, 6, 'rgba(255,241,232,0.55)');
+  } else {
+    circle(34, 142, JOY_R, 'rgba(194,195,199,0.25)'); disc(34, 142, 5, 'rgba(194,195,199,0.18)');
+  }
+  // Feuer
+  const f = BTN.fire, fOn = touchFire;
+  disc(f.x, f.y, f.r, fOn ? 'rgba(255,0,77,0.45)' : 'rgba(255,0,77,0.2)'); circle(f.x, f.y, f.r, 'rgba(255,119,168,0.7)');
+  txt('FEUER', f.x, f.y - 2, fOn ? '#fff1e8' : '#ff77a8', 1, 'c', false);
+  // LED
+  const l = BTN.led, empty = G.d.ledMax && G.ledAmmo <= 0, lOn = Object.values(touches).includes('led');
+  disc(l.x, l.y, l.r, empty ? 'rgba(95,87,79,0.3)' : lOn ? 'rgba(255,236,39,0.45)' : 'rgba(255,236,39,0.2)');
+  circle(l.x, l.y, l.r, empty ? 'rgba(131,118,156,0.6)' : 'rgba(255,236,39,0.7)');
+  ctx.globalAlpha = empty ? 0.4 : 1; ctx.drawImage(LED_SPR, l.x - 3, l.y - 5, 6, 10); ctx.globalAlpha = 1;
 }
 
 // ---------- Effekte ----------
@@ -664,6 +784,9 @@ function gameOver(reason) {
   G.reason = reason; state = 'over'; stateT = 0;
   burst(G.p.x + 20, G.p.y + 8, 50, ['#ffec27', '#ffa300', '#ff004d', '#fff1e8', '#5f574f'], 110, 1.2, 60);
   SND.boom(true); SND.stopMusic(); G.bossWarn = 0;
+  saveHi();
+}
+function saveHi() {
   G.newHi = G.score > hiscores[G.diff];
   if (G.newHi) { hiscores[G.diff] = G.score; try { localStorage.setItem('ledzeppelin_hi_' + G.diff, G.score); } catch (e) {} }
 }
@@ -705,6 +828,7 @@ function update(dt) {
     return;
   }
   if (state === 'pause') return;
+  if (state === 'play' && touchMode && innerHeight > innerWidth) { pauseGame(); return; }
   if (state === 'over') {
     updateWorld(dt, 15);
     updateParts(dt);
@@ -718,8 +842,9 @@ function update(dt) {
   updateWorld(dt, sp);
 
   // Spieler
-  const dx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
-  const dy = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
+  let dx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
+  let dy = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
+  if (joy.id !== null) { dx = joy.dx; dy = joy.dy; }
   p.vx += (dx * 95 - p.vx) * Math.min(1, dt * 10);
   p.vy += (dy * 80 - p.vy) * Math.min(1, dt * 10);
   p.x = clamp(p.x + p.vx * dt, 2, 200);
@@ -728,7 +853,7 @@ function update(dt) {
   p.fireCd -= dt; p.dropCd -= dt;
   p.spread = Math.max(0, p.spread - dt);
 
-  if (keys.Space && p.fireCd <= 0) {
+  if ((keys.Space || touchFire) && p.fireCd <= 0) {
     p.fireCd = 0.17;
     const bx = p.x + 38, by = p.y + 8;
     G.bullets.push({ x: bx, y: by, vx: 240, vy: 0 });
@@ -1027,10 +1152,17 @@ function drawTitle(t) {
   txt('ZEPPELIN', 135, 22, '#fff1e8', 4);
   txt('WHOLE LOTTA LIGHT', W / 2, 48, '#ff77a8', 1, 'c');
   ctx.fillStyle = 'rgba(26,28,44,0.75)'; ctx.fillRect(70, 58, 180, 30);
-  txt('PFEILE / WASD  STEUERN', W / 2, 61, '#c2c3c7', 1, 'c', false);
-  txt('LEERTASTE  SCHIESSEN', W / 2, 68, '#c2c3c7', 1, 'c', false);
-  txt('X  LED ABWERFEN', W / 2, 75, '#ffec27', 1, 'c', false);
-  txt('P PAUSE   M TON AUS', W / 2, 82, '#83769c', 1, 'c', false);
+  if (touchMode) {
+    txt('LINKS ZIEHEN  FLIEGEN', W / 2, 61, '#c2c3c7', 1, 'c', false);
+    txt('RECHTS TIPPEN  SCHIESSEN', W / 2, 68, '#c2c3c7', 1, 'c', false);
+    txt('LED-KNOPF  LED ABWERFEN', W / 2, 75, '#ffec27', 1, 'c', false);
+    txt('II OBEN RECHTS  PAUSE', W / 2, 82, '#83769c', 1, 'c', false);
+  } else {
+    txt('PFEILE / WASD  STEUERN', W / 2, 61, '#c2c3c7', 1, 'c', false);
+    txt('LEERTASTE  SCHIESSEN', W / 2, 68, '#c2c3c7', 1, 'c', false);
+    txt('X  LED ABWERFEN', W / 2, 75, '#ffec27', 1, 'c', false);
+    txt('P PAUSE   M TON AUS', W / 2, 82, '#83769c', 1, 'c', false);
+  }
   // Schwierigkeitsregler
   ctx.fillStyle = 'rgba(26,28,44,0.8)'; ctx.fillRect(90, 114, 140, 32);
   const d = DIFFS[diffIdx], arrowOn = Math.floor(t * 3) % 2 === 0;
@@ -1039,8 +1171,8 @@ function drawTitle(t) {
   if (diffIdx < DIFFS.length - 1) txt('>', 208, 120, arrowOn ? '#fff1e8' : '#83769c', 1, 'c', false);
   for (let i = 0; i < DIFFS.length; i++) { ctx.fillStyle = i <= diffIdx ? d.col : '#5f574f'; ctx.fillRect(152 + i * 6, 130, 4, 2); }
   if (hiscores[diffIdx]) txt('HIGHSCORE ' + hiscores[diffIdx], W / 2, 136, '#ffa300', 1, 'c', false);
-  else txt('LINKS / RECHTS WÄHLEN', W / 2, 136, '#83769c', 1, 'c', false);
-  if (Math.floor(t * 2) % 2 === 0) txt('LEERTASTE ZUM STARTEN', W / 2, 150, '#fff1e8', 1, 'c');
+  else txt(touchMode ? '< > ANTIPPEN' : 'LINKS / RECHTS WÄHLEN', W / 2, 136, '#83769c', 1, 'c', false);
+  if (Math.floor(t * 2) % 2 === 0) txt(touchMode ? 'TIPPEN ZUM STARTEN' : 'LEERTASTE ZUM STARTEN', W / 2, 150, '#fff1e8', 1, 'c');
 }
 
 function render() {
@@ -1095,15 +1227,24 @@ function render() {
 
   drawHUD();
   drawBossUI(t);
+  if (touchMode && state === 'play') drawTouchUI();
   if (G.flash > 0) { ctx.fillStyle = `rgba(255,0,77,${G.flash})`; ctx.fillRect(0, 0, W, H); }
   if (state === 'play' && G.t < 4) {
     txt('BRING DAS LICHT ZURÜCK!', W / 2, 40, '#ffec27', 1, 'c');
-    txt('WIRF LEDS (X) AUF DIE DUNKLEN HÄUSER', W / 2, 48, '#fff1e8', 1, 'c');
+    txt(touchMode ? 'WIRF LEDS AUF DIE DUNKLEN HÄUSER' : 'WIRF LEDS (X) AUF DIE DUNKLEN HÄUSER', W / 2, 48, '#fff1e8', 1, 'c');
   }
   if (state === 'pause') {
     ctx.fillStyle = 'rgba(14,15,30,0.6)'; ctx.fillRect(0, 0, W, H);
-    txt('PAUSE', W / 2, 70, '#fff1e8', 3, 'c');
-    txt('P ZUM WEITERSPIELEN', W / 2, 92, '#c2c3c7', 1, 'c');
+    txt('PAUSE', W / 2, 60, '#fff1e8', 3, 'c');
+    [['WEITER', UI.resume], ['BEENDEN', UI.quit]].forEach(([label, b], i) => {
+      const sel = pauseSel === i;
+      ctx.fillStyle = sel ? 'rgba(255,236,39,0.15)' : 'rgba(26,28,44,0.85)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = sel ? '#ffec27' : '#5f574f';
+      ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1); ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+      txt(label, W / 2, b.y + 5, sel ? '#ffec27' : '#c2c3c7', 1, 'c', false);
+      if (sel && !touchMode) { txt('>', b.x + 8, b.y + 5, '#ffec27', 1, 'l', false); txt('<', b.x + b.w - 11, b.y + 5, '#ffec27', 1, 'l', false); }
+    });
+    if (!touchMode) txt('HOCH/RUNTER WÄHLEN  LEERTASTE OK', W / 2, 126, '#83769c', 1, 'c', false);
   }
   if (state === 'over') {
     ctx.fillStyle = `rgba(14,15,30,${Math.min(0.7, stateT)})`; ctx.fillRect(0, 0, W, H);
@@ -1114,10 +1255,22 @@ function render() {
       txt('PUNKTE  ' + G.score, W / 2, 76, '#fff1e8', 2, 'c');
       txt('HÄUSER BELEUCHTET ' + G.lit + '   BESTE SERIE ' + G.best, W / 2, 92, '#ffec27', 1, 'c');
       txt((G.newHi ? 'NEUER HIGHSCORE!' : 'HIGHSCORE ' + hiscores[G.diff]) + ' (' + G.d.name + ')', W / 2, 102, G.newHi && Math.floor(t * 4) % 2 ? '#ffec27' : '#ffa300', 1, 'c');
-      if (stateT > 1.2 && Math.floor(t * 2) % 2 === 0) txt('LEERTASTE FÜR NOCHMAL', W / 2, 124, '#fff1e8', 1, 'c');
-      if (stateT > 1.2) txt('ESC ZUM MENÜ', W / 2, 134, '#83769c', 1, 'c');
+      if (stateT > 1.2 && Math.floor(t * 2) % 2 === 0) txt(touchMode ? 'TIPPEN FÜR NOCHMAL' : 'LEERTASTE FÜR NOCHMAL', W / 2, 118, '#fff1e8', 1, 'c');
+      if (stateT > 1.2) {
+        const b = UI.overMenu;
+        ctx.fillStyle = 'rgba(26,28,44,0.85)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = '#5f574f'; ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1); ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+        txt(touchMode ? 'MENÜ' : 'ESC MENÜ', W / 2, b.y + 4, '#c2c3c7', 1, 'c', false);
+      }
     }
   }
+}
+
+function drawRotateHint() {
+  if (!touchMode || innerHeight <= innerWidth) return;
+  ctx.fillStyle = 'rgba(14,15,30,0.92)'; ctx.fillRect(0, 0, W, H);
+  txt('BITTE HANDY', W / 2, 70, '#ffec27', 2, 'c');
+  txt('QUER HALTEN', W / 2, 86, '#ffec27', 2, 'c');
 }
 
 // ---------- Titelbildschirm-Stadt ----------
@@ -1131,6 +1284,7 @@ function frame(now) {
   acc += Math.min(0.1, (now - last) / 1000); last = now;
   while (acc >= STEP) { update(STEP); acc -= STEP; }
   render();
+  drawRotateHint();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

@@ -12,8 +12,10 @@ Ein Sideways-Shoot'em'up im Pixel-Look: Du steuerst einen Zeppelin über eine n�
 | Leertaste (halten) | schießen |
 | X | LED abwerfen |
 | Links / Rechts im Titelbild | Schwierigkeit wählen |
-| P / Esc | Pause |
+| P / Esc | Pause (mit Weiter / Beenden) |
 | M | Ton an/aus |
+
+**Handy/Tablet (quer halten):** links ziehen = fliegen, rechts tippen = schießen, LED-Knopf = LED abwerfen, II oben rechts = Pause.
 
 ## Features
 
