@@ -1,5 +1,7 @@
 # LED's'Zeppelin
 
+![LED's'Zeppelin](logo/social-preview.png)
+
 Ein Sideways-Shoot'em'up im Pixel-Look: Du steuerst einen Zeppelin über eine nächtliche Stadt, schießt Gegner ab und wirfst LEDs auf die dunklen Häuser, damit sie wieder leuchten. Dazu gibt's 70er-Rock, live im Browser erzeugt.
 
 **Spielen:** https://dasistdaniel.github.io/led-s-zeppelin/ oder `index.html` lokal im Browser öffnen, keine Installation nötig.
